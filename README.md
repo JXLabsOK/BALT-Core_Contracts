@@ -1,18 +1,34 @@
-# 🧾 Inheritance Smart Contracts – BΔLT
+# 🧾 Blockchain Autonomous Legacy Trust – BΔLT
 
-This repository contains the smart contracts powering **BΔLT (Bitcoin Automated Legacy Trust)** — a decentralized inheritance protocol designed to operate on **Rootstock (RSK)**blockchains.
+This repository contains the smart contracts powering **BΔLTCore (Blockchain Autonomous Legacy Trust)** — a decentralized inheritance protocol designed to operate on **Coredao** blockchains.
 
 ## 📦 Project Structure
 
 - **InheritanceFactory.sol**  
-  The factory contract responsible for deploying new instances of `InheritanceVault.sol`. It maintains a registry of all Vaults created by users and acts as the entry point for inheritance configuration.
+  The factory contract responsible for deploying new instances of InheritanceVault.sol.
+  It maintains a registry of all Vaults created by users and acts as the entry point for configuring digital inheritance.
+
+  Key features:
+  - Deploys one vault per user (per request)
+  - Emits events upon creation for frontend tracking
+  - Does not require knowledge of the asset type (CORE or ERC-20)
+  - Designed for scalability across networks and token standards
 
 - **InheritanceVault.sol**  
-  A personalized inheritance vault deployed per user. It securely holds funds and manages inheritance logic based on inactivity timeframes. The vault allows for:
-  - Setting a designated heir
-  - Defining an inactivity period (e.g., 6 months)
-  - Manual claim by heir if the testator becomes inactive
-  - Cancellation or retrieval by the testator while still active
+  A personalized autonomous vault deployed per user.
+  It securely holds native or ERC-20 assets and governs inheritance based on wallet inactivity.
+
+  Key features:
+  - Optional beneficiary assignment at creation, or automatic assignment on first claim
+  - Customizable inactivity period (e.g., 180 days)
+  - Manual claim by the heir if the owner becomes inactive
+  - Allows deposit of:
+  - CORE tokens (native)
+  - ERC-20 tokens (e.g., USDT)
+  - ERC-721 NFTs
+  - Optional IPFS file attachment and legacy message
+  - Owner can check in to reset the inactivity timer
+  - Immutable and trustless once deployed — logic is fully enforced on-chain
 
 ## ⚙️ Requirements
 
