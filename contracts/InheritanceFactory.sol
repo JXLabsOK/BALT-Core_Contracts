@@ -22,13 +22,15 @@ contract InheritanceFactory {
         creationFee = _creationFee;
     }
 
-    function createVault(address beneficiary, uint256 maxInactivePeriod) external payable returns (address) {        
+    function createVault(address beneficiary, uint256 maxInactivePeriod) external payable returns (address) {
+        require(beneficiary != address(0), "beneficiary address is required");    
+        require(maxInactivePeriod >= 1800, "Inactivity period too short"); // mínimo 30 minutos
         require(msg.value >= creationFee, "Insufficient fee");
-
-        payable(commissionWallet).transfer(msg.value);
-
-        bytes32 salt = keccak256(abi.encodePacked(msg.sender, beneficiary, block.timestamp));
-        InheritanceVault vault = new InheritanceVault{salt: salt}(
+        
+        (bool success, ) = commissionWallet.call{value: msg.value}("");
+        require(success, "Commission transfer failed");
+        
+        InheritanceVault vault = new InheritanceVault(
             msg.sender,
             beneficiary,
             maxInactivePeriod
