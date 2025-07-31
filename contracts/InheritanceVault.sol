@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 
 contract InheritanceVault {
-    address public owner;
-    address public beneficiary;
+    address public immutable owner;
+    address public immutable beneficiary;
+    uint256 public immutable maxInactivePeriod;
     uint256 public lastHeartbeat;
-    uint256 public maxInactivePeriod;
     string public legacyMessage;
     string public fileCid;
 
@@ -23,17 +23,29 @@ contract InheritanceVault {
         _;
     }
 
+    modifier onlyBeneficiary() {
+        require(msg.sender == beneficiary, "Only beneficiary");
+        _;
+    }
+
+    modifier isClaimable() {
+        require(isInactive(), "Owner still active");
+        require(inheritanceStatus == Status.Active, "Inheritance is not active");
+        _;
+    }
+
     event NativeClaimed(uint256 amount);
-    event TokenClaimed(address token, uint256 amount);
-    event NFTClaimed(address nft, uint256 tokenId);
+    event TokenClaimed(address indexed token, uint256 amount);
+    event NFTClaimed(address indexed nft, uint256 tokenId);
     event MessageSet(string message);
     event FileAttached(string cid);
-    event BeneficiaryAssigned(address indexed beneficiary);
+    event InheritanceCancelled(address indexed owner, uint256 refundedAmount);
+    event HeartbeatUpdated(address indexed owner, uint256 timestamp);
 
     constructor(address _owner, address _beneficiary, uint256 _maxInactivePeriod) {
         require(_owner != address(0), "Owner address required");
         require(_beneficiary != address(0), "Beneficiary address required");
-        require(_maxInactivePeriod > 0, "Inactivity period must be greater than zero");
+        require(_maxInactivePeriod >= 1800, "Inactivity period must be >= 30 min");
 
         owner = _owner;
         beneficiary = _beneficiary;
@@ -45,68 +57,68 @@ contract InheritanceVault {
 
     function heartbeat() external onlyOwner {
         lastHeartbeat = block.timestamp;
+        emit HeartbeatUpdated(msg.sender, lastHeartbeat);
     }
 
     function isInactive() public view returns (bool) {
         return block.timestamp > lastHeartbeat + maxInactivePeriod;
     }
 
-    function claim() external {
-        require(isInactive(), "Owner still active");
-        require(msg.sender == beneficiary, "Only the designated beneficiary can claim");
-        require(inheritanceStatus == Status.Active, "Inheritance is not active");
-
+    // ============ Native Coin Claim ============
+    function claim() external onlyBeneficiary isClaimable {
         uint256 balance = address(this).balance;
-        require(balance > 0, "No balance");
+        require(balance > 0, "No native balance");
+
         inheritanceStatus = Status.Claimed;
 
-        payable(msg.sender).transfer(balance);
+        (bool success, ) = payable(beneficiary).call{value: balance}("");
+        require(success, "Native transfer failed");
+
         emit NativeClaimed(balance);
     }
 
+    // ============ ERC20 ============
     function depositToken(address token, uint256 amount) external onlyOwner {
         require(amount > 0, "Amount must be > 0");
-        require(IERC20(token).transferFrom(msg.sender, address(this), amount), "Transfer failed");
+        require(IERC20(token).transferFrom(msg.sender, address(this), amount), "Token transfer failed");
+
         erc20Balances[token] += amount;
     }
 
-    function claimToken(address token) external {
-        require(isInactive(), "Owner still active");
-        require(msg.sender == beneficiary, "Only the designated beneficiary can claim");
-        require(inheritanceStatus == Status.Active, "Inheritance is not active");
-
+    function claimToken(address token) external onlyBeneficiary isClaimable {
         uint256 amount = erc20Balances[token];
-        require(amount > 0, "No tokens");
-        inheritanceStatus = Status.Claimed;
+        require(amount > 0, "No token balance");
 
+        inheritanceStatus = Status.Claimed;
         erc20Balances[token] = 0;
-        require(IERC20(token).transfer(msg.sender, amount), "Token claim failed");
+
+        require(IERC20(token).transfer(msg.sender, amount), "ERC20 transfer failed");
         emit TokenClaimed(token, amount);
     }
 
+    // ============ NFT ============
     function depositNFT(address nft, uint256 tokenId) external onlyOwner {
+        require(!nftDeposited[nft][tokenId], "NFT already deposited");
         IERC721(nft).transferFrom(msg.sender, address(this), tokenId);
         nftDeposited[nft][tokenId] = true;
     }
 
-    function claimNFT(address nft, uint256 tokenId) external {
-        require(isInactive(), "Owner still active");        
-        require(msg.sender == beneficiary, "Only the designated beneficiary can claim");
-        require(inheritanceStatus == Status.Active, "Inheritance is not active");
+    function claimNFT(address nft, uint256 tokenId) external onlyBeneficiary isClaimable {
+        require(nftDeposited[nft][tokenId], "NFT not found");
 
-        require(nftDeposited[nft][tokenId], "NFT not available");
-        nftDeposited[nft][tokenId] = false;
         inheritanceStatus = Status.Claimed;
+        nftDeposited[nft][tokenId] = false;
+
         IERC721(nft).transferFrom(address(this), msg.sender, tokenId);
         emit NFTClaimed(nft, tokenId);
     }
 
+    // ============ Metadata ============
     function setLegacyMessage(string calldata _message) external onlyOwner {
         legacyMessage = _message;
         emit MessageSet(_message);
     }
 
-    // Permitir al owner adjuntar un archivo por IPFS (solo se guarda el CID)
     function attachFile(string calldata _cid) external onlyOwner {
         fileCid = _cid;
         emit FileAttached(_cid);
@@ -120,17 +132,15 @@ contract InheritanceVault {
         return fileCid;
     }
 
-    event InheritanceCancelled(address indexed testator, uint256 refundedAmount);
-
-    function cancelInheritance() public {
-        require(msg.sender == owner, "Only owner can cancel");
-        require(address(this).balance > 0, "No balance to return");
-        require(inheritanceStatus == Status.Active, "Inheritance is not active");
+    // ============ Cancel ============
+    function cancelInheritance() public onlyOwner {
+        require(inheritanceStatus == Status.Active, "Already finalized");
 
         uint256 refund = address(this).balance;
+        inheritanceStatus = Status.Cancelled;
+
         (bool success, ) = owner.call{value: refund}("");
         require(success, "Refund failed");
-        inheritanceStatus = Status.Cancelled;
 
         emit InheritanceCancelled(owner, refund);
     }
